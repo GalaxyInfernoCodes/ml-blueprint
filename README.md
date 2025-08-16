@@ -23,7 +23,10 @@ A starter template for machine learning projects as part of my newsletter series
 
 ## Example Data
 Uses example data from the following Kaggle dataset for demonstration purposes only:
-https://www.kaggle.com/datasets/hellbuoy/car-price-prediction/data
+https://www.kaggle.com/competitions/playground-series-s4e12/data
+
+To use the repo, add the data yourself in the following structure: 
+
 
 ## Project Structure
 
@@ -56,7 +59,3 @@ ml-blueprint/
 ├── README.md
 └── uv.lock
 ```
-
-## License
-
-This project is licensed under the MIT License.

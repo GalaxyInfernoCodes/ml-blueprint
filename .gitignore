@@ -13,6 +13,9 @@ dist/
 wheels/
 *.egg-info
 
+# Larger data files
+data/
+
 # ML / local runs
 mlruns/
 artifacts/
