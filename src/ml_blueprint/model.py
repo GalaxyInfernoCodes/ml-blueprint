@@ -3,7 +3,7 @@ import pandas as pd
 from typing import Optional
 from sklearn.compose import ColumnTransformer
 from sklearn.impute import SimpleImputer
-from sklearn.metrics import root_mean_squared_log_error
+from sklearn.metrics import mean_squared_error
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import OneHotEncoder
 from xgboost import XGBRegressor
@@ -106,6 +106,6 @@ class ModelTrainer:
         y_val = self.validation_df[self.training_cfg.target_column].astype(float)
 
         pred_valid = self.model.predict(X_val)
-        rmse = root_mean_squared_log_error(y_val, pred_valid)
-        print(f"Validation RMSE: {rmse:,.3f}")
-        return rmse
+        mse = mean_squared_error(y_val, pred_valid)
+        print(f"Validation MSE: {mse:,.3f}")
+        return mse

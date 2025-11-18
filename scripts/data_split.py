@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import argparse
 from pathlib import Path
-import mlflow
 
 from ml_blueprint.data import DataHandler
 from ml_blueprint.model import ModelTrainer
@@ -17,18 +16,13 @@ def run_pipeline(config_path: Path) -> None:
     data_handler.prepare_data()
     train_df, validation_df, test_df = data_handler.get_data()
 
-    mlflow.set_experiment("One Stop Experiment")
-    with mlflow.start_run(run_name="One Stop Run"):
-        model_trainer = ModelTrainer(
-            train_df, validation_df, test_df, training_cfg=cfg.training
-        )
-        model_trainer.separate_columns()
-        model = model_trainer.build_pipeline(cfg.model)
-        model.fit(model_trainer.X_train, model_trainer.y_train)
-        val_mse = model_trainer.evaluate()
-        mlflow.log_param("target_column", cfg.training.target_column)
-        mlflow.log_param("model_class", "XGBRegressor")
-        mlflow.log_metric("val_mse", val_mse)
+    model_trainer = ModelTrainer(
+        train_df, validation_df, test_df, training_cfg=cfg.training
+    )
+    model_trainer.separate_columns()
+    model = model_trainer.build_pipeline(cfg.model)
+    model.fit(model_trainer.X_train, model_trainer.y_train)
+    model_trainer.evaluate()
 
 
 def parse_args() -> argparse.Namespace:
