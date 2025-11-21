@@ -1,0 +1,32 @@
+hotel_cancellation:
+  data:
+    source_path: ./data/Hotel cancelation
+    db_path: ./data/hotel.duckdb
+    split:
+      train_size: 0.6
+      val_size: 0.2
+      test_size: 0.2
+      random_state: 42
+  training:
+    target_column: is_canceled
+    drop_columns: ['id', 'reservation_status', 'reservation_status_date']
+  model:
+    random_state: 42
+    catboost:
+      iterations: 1000
+      early_stopping_rounds: 50
+      learning_rate: 0.1
+      depth: 6
+      l2_leaf_reg: 3
+      verbose: 100
+      auto_class_weights: "Balanced"
+  grid_search:
+    learning_rate: [0.05]
+    depth: [8]
+    l2_leaf_reg: [3]
+    bagging_temperature: [1]
+    subsample: [1.0]
+    min_data_in_leaf: [20, 50, 100]
+    auto_class_weights: ["Balanced"]
+
+

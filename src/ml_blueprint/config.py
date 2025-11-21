@@ -24,6 +24,7 @@ class SplitConfig(BaseModel):
 class DataConfig(BaseModel):
     source_path: Path = Path("./data/playground-series-s4e12")
     target_path: Path = Path("./data")
+    db_path: Optional[Path] = None
     split: SplitConfig = SplitConfig()
 
 
@@ -43,9 +44,20 @@ class XGBConfig(BaseModel):
     verbosity: int = 2
 
 
+class CatBoostConfig(BaseModel):
+    iterations: int = Field(500, ge=1)
+    learning_rate: float = Field(0.1, gt=0, le=1)
+    depth: int = Field(6, ge=1)
+    l2_leaf_reg: float = Field(3.0, ge=0)
+    early_stopping_rounds: Optional[int] = Field(None, ge=1)
+    verbose: int = 100
+    random_state: Optional[int] = None
+
+
 class ModelConfig(BaseModel):
     random_state: int = 42
-    xgb: XGBConfig = XGBConfig()
+    xgb: Optional[XGBConfig] = None
+    catboost: Optional[CatBoostConfig] = None
 
 
 class TrainingConfig(BaseModel):
@@ -63,14 +75,18 @@ class AppConfig(BaseModel):
         """Load and validate config from a YAML file.
 
         Accepts top-level keys either directly or under a namespaced
-        key `ml_blueprint` for convenience.
+        key `ml_blueprint` or `hotel_cancellation` for convenience.
         """
         yaml_path = Path(path)
         with yaml_path.open("r", encoding="utf-8") as f:
             data: Any = yaml.safe_load(f) or {}
 
-        if isinstance(data, dict) and "ml_blueprint" in data:
-            data = data["ml_blueprint"]
+        # Handle namespaces
+        if isinstance(data, dict):
+            if "ml_blueprint" in data:
+                data = data["ml_blueprint"]
+            elif "hotel_cancellation" in data:
+                data = data["hotel_cancellation"]
 
         return cls.model_validate(data)
 

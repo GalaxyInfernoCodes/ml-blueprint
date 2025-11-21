@@ -1,111 +1,130 @@
-import numpy as np
+from __future__ import annotations
+
+import logging
+
 import pandas as pd
-from typing import Optional
-from sklearn.compose import ColumnTransformer
-from sklearn.impute import SimpleImputer
-from sklearn.metrics import mean_squared_error
-from sklearn.pipeline import Pipeline
-from sklearn.preprocessing import OneHotEncoder
-from xgboost import XGBRegressor
-from ml_blueprint.config import ModelConfig, TrainingConfig
+from catboost import CatBoostClassifier, Pool
+from sklearn.metrics import accuracy_score, roc_auc_score, classification_report, f1_score
+
+from ml_blueprint.config import AppConfig
+
+logger = logging.getLogger(__name__)
 
 
-class ModelTrainer:
-    def __init__(
-        self,
-        train_df: pd.DataFrame,
-        validation_df: pd.DataFrame,
-        test_df: pd.DataFrame,
-        training_cfg: TrainingConfig,
-    ):
+class CatBoostTrainer:
+    """Train and evaluate CatBoost classifier."""
+    
+    def __init__(self, config: AppConfig, train_df: pd.DataFrame, 
+                 val_df: pd.DataFrame, test_df: pd.DataFrame):
+        self.config = config
         self.train_df = train_df
-        self.validation_df = validation_df
+        self.val_df = val_df
         self.test_df = test_df
-        self.training_cfg = training_cfg
+        
+        self.target_column = config.training.target_column
+        self.drop_columns = config.training.drop_columns
+        
+    def prepare_features(self) -> None:
+        """Separate features and target, identify categorical columns."""
+        # Prepare training data
+        self.y_train = self.train_df[self.target_column]
+        self.X_train = self.train_df.drop(columns=[self.target_column] + self.drop_columns)
+        
+        # Prepare validation data
+        self.y_val = self.val_df[self.target_column]
+        self.X_val = self.val_df.drop(columns=[self.target_column] + self.drop_columns)
+        
+        # Prepare test data
+        self.y_test = self.test_df[self.target_column]
+        self.X_test = self.test_df.drop(columns=[self.target_column] + self.drop_columns)
+        
+        # Identify categorical features (CatBoost handles them natively)
+        self.cat_features = self.X_train.select_dtypes(include=['object']).columns.tolist()
+        
+        # Handle missing values
+        # For numeric columns: fill with median
+        numeric_cols = self.X_train.select_dtypes(include=['number']).columns
+        for col in numeric_cols:
+            median_val = self.X_train[col].median()
+            self.X_train[col] = self.X_train[col].fillna(median_val)
+            self.X_val[col] = self.X_val[col].fillna(median_val)
+            self.X_test[col] = self.X_test[col].fillna(median_val)
+        
+        # For categorical columns: fill with 'missing'
+        for col in self.cat_features:
+            self.X_train[col] = self.X_train[col].fillna('missing')
+            self.X_val[col] = self.X_val[col].fillna('missing')
+            self.X_test[col] = self.X_test[col].fillna('missing')
+        
+        logger.info(f"Target column: {self.target_column}")
+        logger.info(f"Dropped columns: {self.drop_columns}")
+        logger.info(f"Categorical features ({len(self.cat_features)}): {self.cat_features[:5]}...")
+        logger.info(f"Total features: {len(self.X_train.columns)}")
+        logger.info(f"Class distribution in training:\n{self.y_train.value_counts(normalize=True)}")
+    
+    def train(self) -> CatBoostClassifier:
+        """Train CatBoost classifier."""
+        if not self.config.model.catboost:
+            raise ValueError("CatBoost configuration missing")
 
-    def separate_columns(self) -> None:
-        # Separate features/target
-        self.y_train = self.train_df[self.training_cfg.target_column].astype(float)
-        self.X_train = self.train_df.drop(
-            columns=[self.training_cfg.target_column] + self.training_cfg.drop_columns
+        # Get CatBoost parameters from config
+        cb_params = self.config.model.catboost.model_dump(exclude_none=True)
+        if self.config.model.random_state is not None:
+            cb_params['random_state'] = self.config.model.random_state
+        
+        # Create CatBoost pools for efficient training
+        train_pool = Pool(
+            data=self.X_train,
+            label=self.y_train,
+            cat_features=self.cat_features
         )
-
-        # Infer column types
-        self.cat_cols = self.X_train.select_dtypes(
-            include=["object", "category"]
-        ).columns.tolist()
-        self.num_cols = self.X_train.select_dtypes(include=[np.number]).columns.tolist()
-
-        print("Categorical cols:", self.cat_cols)
-        print("Numeric cols:", self.num_cols)
-
-    def build_pipeline(self, model_cfg: Optional[ModelConfig] = None) -> Pipeline:
-        # Numeric: median impute (XGBoost doesn't require scaling)
-        num_pipe = Pipeline(
-            steps=[
-                ("imputer", SimpleImputer(strategy="median")),
-            ]
+        
+        val_pool = Pool(
+            data=self.X_val,
+            label=self.y_val,
+            cat_features=self.cat_features
         )
-
-        # Categorical: impute missing with constant and OHE with 'ignore' for unseen
-        cat_pipe = Pipeline(
-            steps=[
-                ("imputer", SimpleImputer(strategy="most_frequent")),
-                ("ohe", OneHotEncoder(handle_unknown="ignore", sparse_output=True)),
-            ]
+        
+        logger.info("Training CatBoost model...")
+        self.model = CatBoostClassifier(**cb_params)
+        self.model.fit(
+            train_pool,
+            eval_set=val_pool,
+            use_best_model=True,
+            plot=False
         )
-
-        preprocess = ColumnTransformer(
-            transformers=[
-                ("num", num_pipe, self.num_cols),
-                ("cat", cat_pipe, self.cat_cols),
-            ]
-        )
-
-        # Configure XGBoost from config (fallback to defaults)
-        params = {
-            "n_estimators": 1000,
-            "learning_rate": 0.05,
-            "max_depth": 7,
-            "subsample": 0.4,
-            "colsample_bytree": 0.8,
-            "reg_lambda": 1.0,
-            "reg_alpha": 0.0,
-            "objective": "reg:squarederror",
-            "booster": "dart",
-            "random_state": 42,
-            "n_jobs": -1,
-            "tree_method": "auto",
-            "verbosity": 2,
-        }
-
-        if model_cfg is not None:
-            # Override with xgb-specific settings
-            xgb_overrides = model_cfg.xgb.model_dump(exclude_none=True)
-            params.update(xgb_overrides)
-            # Top-level random_state takes precedence if provided
-            if model_cfg.random_state is not None:
-                params["random_state"] = model_cfg.random_state
-
-        xgb = XGBRegressor(**params)
-        print("xgb.get_params():", xgb.get_params())
-
-        self.model = Pipeline(
-            steps=[
-                ("preprocess", preprocess),
-                ("xgb", xgb),
-            ]
-        )
-
+        
         return self.model
-
-    def evaluate(self) -> float:
-        X_val = self.validation_df.drop(
-            columns=[self.training_cfg.target_column] + self.training_cfg.drop_columns
-        )
-        y_val = self.validation_df[self.training_cfg.target_column].astype(float)
-
-        pred_valid = self.model.predict(X_val)
-        mse = mean_squared_error(y_val, pred_valid)
-        print(f"Validation MSE: {mse:,.3f}")
-        return mse
+    
+    def evaluate(self) -> dict:
+        """Evaluate model on validation set."""
+        # Predictions
+        y_pred = self.model.predict(self.X_val)
+        y_pred_proba = self.model.predict_proba(self.X_val)[:, 1]
+        
+        # Calculate metrics
+        accuracy = accuracy_score(self.y_val, y_pred)
+        roc_auc = roc_auc_score(self.y_val, y_pred_proba)
+        f1_macro = f1_score(self.y_val, y_pred, average='macro')
+        
+        logger.info("="*50)
+        logger.info("VALIDATION RESULTS")
+        logger.info("="*50)
+        logger.info(f"Accuracy: {accuracy:.4f}")
+        logger.info(f"ROC AUC: {roc_auc:.4f}")
+        logger.info(f"F1 Macro: {f1_macro:.4f}")
+        logger.info(f"Classification Report:\n{classification_report(self.y_val, y_pred)}")
+        
+        # Feature importance
+        feature_importance = pd.DataFrame({
+            'feature': self.X_train.columns,
+            'importance': self.model.feature_importances_
+        }).sort_values('importance', ascending=False)
+        
+        logger.info(f"Top 10 Most Important Features:\n{feature_importance.head(10).to_string(index=False)}")
+        
+        return {
+            'accuracy': accuracy,
+            'roc_auc': roc_auc,
+            'f1_macro': f1_macro
+        }
